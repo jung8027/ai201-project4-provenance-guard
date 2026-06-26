@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+documents/Show (Project)_ Week 4 - AI201 _ Applications of AI Engineering _ CodePath Courses
