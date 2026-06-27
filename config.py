@@ -29,3 +29,8 @@ VALID_ATTRIBUTIONS = ["likely_ai", "uncertain", "likely_human"]
 # --- Signal combination weights (used in Milestone 4) ---
 LLM_WEIGHT = 0.6
 STYLE_WEIGHT = 0.4
+
+# --- Rate limiting (Milestone 5; see README for reasoning) ---
+# A real creator submits their own work a handful of times; these limits absorb editing
+# bursts while blocking a script that tries to flood the endpoint.
+SUBMIT_RATE_LIMIT = "10 per minute;100 per day"

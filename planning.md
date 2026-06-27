@@ -358,3 +358,27 @@ spec above. (Testing results live in the README.)
   rather than `likely_ai`, because the `0.80` bar requires both signals to agree. `likely_ai` is
   reached when the signals concur (e.g. long, templated AI). This is the intended
   false-positive-averse asymmetry.
+
+### Milestone 5 — production layer (built)
+- `labeler.py` — `make_label(attribution, confidence=None)` returns the three §3 variants verbatim;
+  the variant is selected by the attribution band so the text changes with the score.
+- `app.py` — the real label now replaces the placeholder in the `/submit` response; added
+  `POST /appeal` and Flask-Limiter.
+- `auditor.py` — `log_appeal()`, `find_submission()`, and a `status` filter on `get_log()`.
+- **Appeals (per §4):** `POST /appeal` takes `content_id` + `creator_reasoning`, returns `404` for an
+  unknown id, otherwise appends an `event:"appeal"` record with `status:"under_review"` carrying
+  the creator's reasoning plus a snapshot of the original decision (attribution, confidence, both
+  signal scores). `GET /log?status=under_review` is the human-reviewer appeal queue.
+- **Rate limiting:** `@limiter.limit("10 per minute;100 per day")` on `/submit`, `storage_uri="memory://"`.
+- **Divergences from spec (with reasons):**
+  1. **Append-only status model.** The log is JSONL, so an appeal doesn't mutate the original row;
+     it appends an `under_review` record and the *current* status of a `content_id` is the status on
+     its most recent entry. Simpler and gives a full audit trail (§4 said "in whatever storage you're
+     using" — the log is the storage). `find_submission()` correlates by `content_id`.
+  2. **`event` field added** to every record (`"submission"` / `"appeal"`) to distinguish row types
+     and drive `find_submission()`; not in the original record shape.
+  3. **`GET /log?status=` filter** added (not in the API surface) to realize the §4 reviewer queue
+     cheaply.
+  4. **Label variant is keyed off `attribution`, not a re-derived threshold** — `make_label` takes
+     `confidence` for interface symmetry but the band is already encoded in `attribution`, avoiding a
+     second source of truth for the thresholds.

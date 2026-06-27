@@ -2,22 +2,31 @@
 
 Mirrors the orchestration role of app.py in the RepairSafe Lab 4 starter.
 
-Milestone 3: POST /submit (rate limiting added in M5), the first detection signal wired in,
-structured audit logging, and GET /log. Confidence and label are placeholders until
-Milestones 4 (combined confidence score) and 5 (transparency label).
+Endpoints: POST /submit (two-signal detection + confidence + transparency label, rate limited),
+POST /appeal (contest a classification), GET /log (audit log / appeal queue).
 """
 import datetime
 import uuid
 
 from flask import Flask, jsonify, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import auditor
+import config
 import detector
+import labeler
 
 app = Flask(__name__)
 
-# Placeholders until the later milestones replace them.
-PLACEHOLDER_LABEL = "Label pending (implemented in Milestone 5)"
+# Rate limiting (M5). In-memory storage is fine for local dev; default_limits=[] so only the
+# routes we explicitly decorate are limited.
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 
 def _utc_now():
@@ -25,6 +34,7 @@ def _utc_now():
 
 
 @app.route("/submit", methods=["POST"])
+@limiter.limit(config.SUBMIT_RATE_LIMIT)
 def submit():
     body = request.get_json(silent=True) or {}
     text = body.get("text")
@@ -59,21 +69,45 @@ def submit():
         "style_reliable": signal2["reliable"],
         "llm_rationale": signal1["rationale"],
         "status": "classified",
-        # label is still a placeholder until Milestone 5
     }
     auditor.log_submission(record)
+
+    # --- Transparency label: varies by confidence band (M5) ---
+    label = labeler.make_label(attribution, confidence)
 
     return jsonify({
         "content_id": content_id,
         "attribution": attribution,
         "confidence": confidence,
-        "label": PLACEHOLDER_LABEL,
+        "label": label,
+    })
+
+
+@app.route("/appeal", methods=["POST"])
+def appeal():
+    body = request.get_json(silent=True) or {}
+    content_id = body.get("content_id")
+    creator_reasoning = body.get("creator_reasoning")
+
+    if not content_id or not creator_reasoning:
+        return jsonify({"error": "Both 'content_id' and 'creator_reasoning' are required."}), 400
+
+    record = auditor.log_appeal(content_id, creator_reasoning)
+    if record is None:
+        return jsonify({"error": f"No submission found for content_id '{content_id}'."}), 404
+
+    return jsonify({
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Appeal received. The classification is now under review by a human.",
     })
 
 
 @app.route("/log", methods=["GET"])
 def log():
-    return jsonify({"entries": auditor.get_log()})
+    # Optional ?status=under_review yields the human-reviewer appeal queue.
+    status = request.args.get("status")
+    return jsonify({"entries": auditor.get_log(status=status)})
 
 
 if __name__ == "__main__":

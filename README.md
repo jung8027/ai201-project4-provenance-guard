@@ -73,19 +73,96 @@ strongly templated AI (long, uniform)   0.90   0.71 True   0.82  likely_ai
 
 ---
 
-## Audit Log
+## Transparency Label
 
-Every submission writes a structured JSON line to `logs/audit.jsonl`, capturing both individual
-signal scores and the combined confidence. Retrieve recent entries via `GET /log`. Sample
-(3 entries, one per label band):
+The label returned by `POST /submit` is plain-language and **changes by confidence band** — it is
+never a constant string. The "uncertain" variant is deliberately worded so it never reads as an
+accusation, because on a writing platform falsely labeling a human's work as AI is the worst
+outcome. All three variants were verified reachable by submitting inputs that land in each band.
 
-```json
-{"content_id": "2dbb73e1-c7e3-426f-ae48-abd0edfed664", "creator_id": "u-ai", "timestamp": "2026-06-27T01:32:18.059977+00:00", "attribution": "uncertain", "confidence": 0.6573, "llm_score": 0.8, "style_score": 0.4432, "style_reliable": true, "llm_rationale": "The text exhibits overly formal and uniform language typical of AI-generated content.", "status": "classified"}
-{"content_id": "0b5bad47-3e11-46d3-a3bb-91d27314a34d", "creator_id": "u-human", "timestamp": "2026-06-27T01:32:18.413900+00:00", "attribution": "likely_human", "confidence": 0.1603, "llm_score": 0.2, "style_score": 0.1007, "style_reliable": true, "llm_rationale": "The text's casual tone, use of colloquial expressions, and personal experience suggest human authorship.", "status": "classified"}
-{"content_id": "64d6710b-a611-45fe-bbd8-96c70a9a3da6", "creator_id": "u-templated", "timestamp": "2026-06-27T01:32:18.644911+00:00", "attribution": "likely_ai", "confidence": 0.8171, "llm_score": 0.9, "style_score": 0.6927, "style_reliable": true, "llm_rationale": "The text exhibits an overly uniform and formulaic structure.", "status": "classified"}
+| Variant | Band (`p_ai`) | Exact text displayed |
+|---------|---------------|----------------------|
+| **High-confidence AI** | `≥ 0.80` | 🤖 Likely AI-generated. Our automated analysis found strong signs this text was produced with an AI tool. This is an estimate, not a final verdict — if you wrote this yourself, you can appeal and a person will review it. |
+| **Uncertain** | `0.30 – 0.80` | ❔ Origin uncertain. Our automated analysis couldn't confidently determine whether this text was written by a person or an AI tool, so we're not drawing a conclusion. Treat the authorship as undetermined. |
+| **High-confidence human** | `≤ 0.30` | ✍️ Likely human-written. Our automated analysis found no strong signs of AI generation in this text. This is an automated estimate, not a guarantee of authorship. |
+
+Reachability check (each input produced the expected band and label):
+
+```
+INPUT                          CONF   ATTRIBUTION    LABEL VARIANT
+-------------------------------------------------------------------------
+templated AI essay             0.82   likely_ai      🤖 Likely AI-generated…
+casual human review            0.16   likely_human   ✍️ Likely human-written…
+formal human paragraph         0.77   uncertain      ❔ Origin uncertain…
 ```
 
-*(Appeal entries and the `under_review` status are added in Milestone 5.)*
+---
+
+## Appeals Workflow
+
+`POST /appeal` lets a creator contest a classification. It accepts `content_id` (from the original
+`/submit` response) and `creator_reasoning`. The endpoint flips the content's status to
+`under_review`, appends an appeal record beside a snapshot of the original decision, and returns a
+confirmation. An unknown `content_id` returns `404`. There is no automated reclassification — a
+human reviewer acts on the queue (`GET /log?status=under_review`).
+
+```
+$ curl -s -X POST localhost:5000/appeal -H "Content-Type: application/json" \
+    -d '{"content_id":"5001ed6e-…","creator_reasoning":"I wrote this review myself…"}'
+{"content_id": "5001ed6e-…", "status": "under_review",
+ "message": "Appeal received. The classification is now under review by a human."}
+
+$ curl -s -X POST localhost:5000/appeal -d '{"content_id":"does-not-exist",…}'   # → HTTP 404
+{"error": "No submission found for content_id 'does-not-exist'."}
+```
+
+---
+
+## Rate Limiting
+
+`POST /submit` is rate limited with Flask-Limiter (in-memory store):
+
+```python
+@limiter.limit("10 per minute;100 per day")
+```
+
+**Chosen limits and reasoning.** A real creator submits their own work a handful of times — even
+heavy editing-and-resubmitting rarely exceeds a few requests per minute, so **10/minute** comfortably
+covers genuine use while stopping a script from hammering the (paid, LLM-backed) endpoint. The
+**100/day** cap bounds sustained abuse over a day while still accommodating a prolific creator or a
+small team sharing an IP. The numbers are intentionally generous to humans and hostile to floods.
+
+Evidence — 12 rapid requests against the 10/minute limit (first 10 succeed, the rest are rejected):
+
+```
+request 1  -> 200      request 7  -> 200
+request 2  -> 200      request 8  -> 200
+request 3  -> 200      request 9  -> 200
+request 4  -> 200      request 10 -> 200
+request 5  -> 200      request 11 -> 429
+request 6  -> 200      request 12 -> 429
+```
+
+---
+
+## Audit Log
+
+Every submission and appeal writes a structured JSON line to `logs/audit.jsonl`, capturing the
+timestamp, content ID, attribution, combined confidence, **both individual signal scores**, and —
+for appeals — the creator's reasoning and `under_review` status. Retrieve entries via `GET /log`
+(or `GET /log?status=under_review` for the appeal queue). Live sample (3 submissions, one per band,
+plus one appeal):
+
+```json
+{"content_id": "514eb07f-e7a8-4ac9-99f3-7cc7d8fd6897", "creator_id": "u-templated", "timestamp": "2026-06-27T01:40:46.247068+00:00", "attribution": "likely_ai", "confidence": 0.8171, "llm_score": 0.9, "style_score": 0.6927, "style_reliable": true, "llm_rationale": "The text exhibits an overly uniform and formulaic structure.", "status": "classified", "event": "submission"}
+{"content_id": "5001ed6e-8f1a-4653-b3ee-d3d35bc3e742", "creator_id": "u-human", "timestamp": "2026-06-27T01:40:46.504034+00:00", "attribution": "likely_human", "confidence": 0.1603, "llm_score": 0.2, "style_score": 0.1007, "style_reliable": true, "llm_rationale": "The text's informal tone, use of colloquial expressions, and personal opinion suggest human authorship.", "status": "classified", "event": "submission"}
+{"content_id": "d6337685-3f6d-431e-bf7f-bb6c86b86ae1", "creator_id": "u-econ", "timestamp": "2026-06-27T01:40:46.860801+00:00", "attribution": "uncertain", "confidence": 0.7688, "llm_score": 0.8, "style_score": 0.5921, "style_reliable": false, "llm_rationale": "The text exhibits a formal and overly uniform tone, typical of AI-generated content.", "status": "classified", "event": "submission"}
+{"event": "appeal", "content_id": "5001ed6e-8f1a-4653-b3ee-d3d35bc3e742", "creator_id": "u-human", "timestamp": "2026-06-27T01:40:46.897210+00:00", "status": "under_review", "appeal_reasoning": "I wrote this review myself after eating there; the casual tone is just how I write.", "original_attribution": "likely_human", "original_confidence": 0.1603, "llm_score": 0.2, "style_score": 0.1007}
+```
+
+The appeal record carries a snapshot of the original decision (`original_attribution`,
+`original_confidence`, both signal scores) so a reviewer has full context without cross-referencing.
+The current status of a `content_id` is the status on its most recent entry.
 
 ---
 
