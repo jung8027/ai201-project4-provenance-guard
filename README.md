@@ -23,18 +23,6 @@ Provenance Guard is a backend system that creative-sharing platforms can use to 
 
 ---
 
-## What to Implement
-
-| Milestone | File(s) | Endpoint / Function | Description |
-|-----------|---------|---------------------|-------------|
-| 3 | `app.py` | `POST /submit` + signal 1 | Submission endpoint, first detection signal (Groq LLM), audit log stub |
-| 4 | `detector.py` | second signal + confidence scoring | Stylometric heuristics signal and combined confidence score |
-| 5 | `app.py` | `POST /appeal`, label logic, rate limiting | Transparency label, appeals workflow, rate limiting, complete audit log |
-
-Complete your `planning.md` spec before implementing each milestone.
-
----
-
 ## Architecture Overview
 
 The path a single submission takes from input to the label a user sees:
