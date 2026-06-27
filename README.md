@@ -317,18 +317,27 @@ This project was built with Claude (Claude Code) as the AI implementation tool, 
 
 ```
 ai201-project4-provenance-guard/
-├── app.py              ← Flask orchestration + endpoints (M3, M5)
-├── detector.py         ← detection signals + confidence scoring (M3, M4)
-├── labeler.py          ← transparency-label generation (M5)
-├── auditor.py          ← audit logger + content status (M3, M5)
+├── app.py              ← Flask orchestration + all endpoints
+├── detector.py         ← detection signals + confidence scoring
+├── labeler.py          ← transparency-label generation
+├── auditor.py          ← audit logger + content status store
 ├── config.py           ← constants (API key, model, thresholds, limits, log path)
+├── demo.sh             ← guided demo walkthrough of all seven features
+├── planning.md         ← architecture, spec, and AI tool plan
+├── requirements.txt    ← Python dependencies
+├── .env.example        ← template for GROQ_API_KEY
 ├── data/
 │   └── label_variants.md   ← reference text for the three label variants
-├── logs/               ← audit.jsonl written here after M3
-├── planning.md         ← architecture, spec, and AI tool plan (write before any code)
-└── specs/
-    ├── system-design.md    ← read this first
-    ├── detector-spec.md    ← signals + scoring spec (M3/M4)
-    ├── labeler-spec.md     ← label spec (M5)
-    └── auditor-spec.md     ← audit log spec (M3)
+├── logs/
+│   └── audit.jsonl         ← append-only structured audit log
+├── specs/
+│   ├── system-design.md    ← read this first
+│   ├── detector-spec.md    ← signals + scoring spec
+│   ├── labeler-spec.md     ← label spec
+│   └── auditor-spec.md     ← audit log spec
+└── tests/
+    ├── test_api.py         ← endpoint integration tests
+    ├── test_detector.py    ← detection signal unit tests
+    ├── test_labeler.py     ← label generation tests
+    └── test_scoring.py     ← confidence scoring calibration harness
 ```
