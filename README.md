@@ -76,10 +76,18 @@ Complete your `planning.md` spec before implementing each milestone.
 
 ```
 ai201-project4-provenance-guard/
-├── app.py              ← Flask app, submission endpoint, appeal endpoint
-├── detector.py         ← Detection signals and confidence scoring logic
-├── config.py           ← Constants (API key, model, log path, thresholds)
-├── logs/               ← audit.jsonl written here
-├── planning.md         ← Architecture, spec, and AI tool plan (write before any code)
-└── .env                ← GROQ_API_KEY (never commit)
+├── app.py              ← Flask orchestration + endpoints (M3, M5)
+├── detector.py         ← detection signals + confidence scoring (M3, M4)
+├── labeler.py          ← transparency-label generation (M5)
+├── auditor.py          ← audit logger + content status (M3, M5)
+├── config.py           ← constants (API key, model, thresholds, limits, log path)
+├── data/
+│   └── label_variants.md   ← reference text for the three label variants
+├── logs/               ← audit.jsonl written here after M3
+├── planning.md         ← architecture, spec, and AI tool plan (write before any code)
+└── specs/
+    ├── system-design.md    ← read this first
+    ├── detector-spec.md    ← signals + scoring spec (M3/M4)
+    ├── labeler-spec.md     ← label spec (M5)
+    └── auditor-spec.md     ← audit log spec (M3)
 ```
