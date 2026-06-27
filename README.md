@@ -35,6 +35,60 @@ Complete your `planning.md` spec before implementing each milestone.
 
 ---
 
+## Architecture Overview
+
+The path a single submission takes from input to the label a user sees:
+
+```
+POST /submit  →  rate limit  →  assign content_id
+      │
+      ├─▶ Signal 1: llm_signal()        (detector.py · Groq · semantic)   → llm_score
+      └─▶ Signal 2: stylometric_signal() (detector.py · pure Python · structural) → style_score
+                                   │
+                                   ▼
+              combine_signals()  →  p_ai + attribution   (detector.py)
+                                   ▼
+              make_label()       →  transparency label   (labeler.py)
+                                   ▼
+              log_submission()   →  logs/audit.jsonl      (auditor.py)
+                                   ▼
+        response: { content_id, attribution, confidence, label }
+```
+
+`app.py` orchestrates; `detector.py` holds both signals and the scoring; `labeler.py` turns a score
+into reader-facing text; `auditor.py` is the structured log and content-status store. The **appeal
+path** (`POST /appeal`) looks up the `content_id`, appends an `under_review` record with the
+creator's reasoning beside the original decision, and returns a confirmation — no automated
+reclassification. Full narrative and diagrams live in [planning.md](planning.md) (`## Architecture`).
+
+---
+
+## Detection Signals
+
+Two **independent** signals — one semantic, one structural — so they fail in different situations.
+Agreement is real evidence; disagreement is itself a useful uncertainty signal. Single-signal
+detection would have no such cross-check.
+
+### Signal 1 — LLM classifier (Groq, semantic)
+- **Measures:** whether the text *reads* as AI-generated, judged holistically (tone, voice, fluency,
+  even hedging, over-uniform structure). Output: `p_ai ∈ [0,1]` + a one-line rationale.
+- **Why chosen:** the holistic "does this sound generated" read is the single strongest indicator,
+  and an LLM captures it without hand-engineering.
+- **What it misses:** fooled by framing (a polished, formal human can read "AI") and by lightly
+  edited AI; non-deterministic between calls.
+
+### Signal 2 — Stylometric heuristics (pure Python, structural)
+- **Measures:** how *uniform* the writing is — sentence-length burstiness (coefficient of
+  variation), type-token ratio, punctuation density → a single `style_score ∈ [0,1]` where higher
+  = more uniform = more AI-like.
+- **Why chosen:** it is genuinely independent of the LLM (structure, not meaning), costs nothing,
+  and provides the cross-check that catches the LLM's blind spots.
+- **What it misses:** length-sensitive (unreliable below ~3 sentences / 25 words, where it is
+  down-weighted) and genre-blind — it mis-reads deliberately uniform human writing (formal
+  abstracts, repetition-heavy poetry) as AI.
+
+---
+
 ## Confidence Scoring — Testing & Results
 
 The pipeline combines two signals into a single `p_ai` (probability the text is AI-generated):
@@ -163,6 +217,74 @@ plus one appeal):
 The appeal record carries a snapshot of the original decision (`original_attribution`,
 `original_confidence`, both signal scores) so a reviewer has full context without cross-referencing.
 The current status of a `content_id` is the status on its most recent entry.
+
+---
+
+## Known Limitations
+
+**Formal, uniform human writing is the system's worst case** — e.g. a peer-reviewed abstract, a
+legal clause, or a technical spec written by a person. Such text has low sentence-length variation,
+so the stylometric signal scores it AI-like, *and* the LLM tends to read impersonal, polished prose
+as AI-leaning. Because both signals can agree for the wrong reason, this is the one place a
+**false positive** (a human's work labeled AI — the worst outcome on a writing platform) can slip
+through. The root cause is intrinsic to Signal 2: it measures *uniformity*, not authorship, and
+cannot distinguish disciplined human formality from machine smoothness. In testing, the formal
+economics paragraph landed at `0.77` — `uncertain`, close to the `0.80` AI line. The high bar plus
+the appeals path are the mitigations, but a sufficiently formal style can still drift upward.
+
+A second specific failure: **very short submissions** (≤ ~3 sentences / 25 words, e.g. a two-line
+micro-poem). The stylometric signal has too little text to measure burstiness or vocabulary
+diversity meaningfully, so it is flagged unreliable and down-weighted — the system effectively
+falls back to the LLM alone and loses its cross-check exactly when it is least confident.
+
+---
+
+## Spec Reflection
+
+**One way the spec helped.** Deciding *in `planning.md`, before any code*, that false positives are
+worse than false negatives turned confidence scoring from an ad-hoc choice into a concrete
+contract: asymmetric bands (`≥ 0.80` to assert AI) plus a disagreement pull toward "uncertain."
+That decision directly fixed a real bug — a formal-human paragraph that Signal 1 alone rated
+`likely_ai` in Milestone 3 correctly became `uncertain` once the second signal and the spec's
+scoring rules were in place.
+
+**One way the implementation diverged.** The spec named Signal 2's first metric as raw
+*sentence-length variance*. Calibrating against the four reference inputs showed raw standard
+deviation barely separated AI from human on short samples, so the implementation switched to the
+**coefficient of variation** (length-normalized) and pinned metric sub-weights the spec hadn't
+specified. The divergence was driven by evidence from the Milestone 4 test harness, not preference.
+
+---
+
+## AI Usage
+
+This project was built with Claude (Claude Code) as the AI implementation tool, directed by the
+`planning.md` spec. Two specific instances:
+
+1. **Stylometric signal (Milestone 4).** I gave the AI the detection-signals spec and asked it to
+   implement Signal 2 as three metrics combined into one score. Its first version mapped raw
+   sentence-length standard deviation directly to a score. Running the calibration harness
+   (`tests/test_scoring.py`) showed the scores clustered and failed to separate clearly-AI from
+   clearly-human short text. **I overrode** the raw-stdev mapping with a coefficient-of-variation
+   formula and re-weighted the three metrics (0.65 / 0.20 / 0.15), then re-ran the harness to
+   confirm meaningful separation.
+
+2. **Appeals + audit log (Milestone 5).** I asked the AI to implement `POST /appeal` and the status
+   update from the appeals spec. It produced an append-only log writer. **I kept** the append-only
+   design (better audit trail) but **revised** it to add an `event` field, a `find_submission()`
+   correlation by `content_id`, and a `GET /log?status=under_review` queue — the first cut had no
+   way for a human reviewer to see pending appeals, which the spec required.
+
+---
+
+## Portfolio Walkthrough
+
+> _A short (couple-minute) screen recording giving a tour of the system end-to-end — submitting
+> content across the three confidence bands, filing an appeal, and triggering the rate limit —
+> while talking through the two-signal design and the false-positive asymmetry. The detailed
+> evidence is captured in the sections above; the walkthrough is the narrated tour._
+>
+> **Link:** _(to be recorded and added before submission)_
 
 ---
 

@@ -382,3 +382,13 @@ spec above. (Testing results live in the README.)
   4. **Label variant is keyed off `attribution`, not a re-derived threshold** — `make_label` takes
      `confidence` for interface symmetry but the band is already encoded in `attribution`, avoiding a
      second source of truth for the thresholds.
+
+### Milestone 6 — documentation (built)
+- README completed with all required submission sections: architecture overview, detection signals
+  (what each measures / why chosen / what it misses), confidence scoring with two contrasting
+  example submissions, all three transparency-label variants verbatim, rate-limiting limits +
+  reasoning + 200/429 evidence, the audit-log sample (incl. an appeal), **known limitations**,
+  **spec reflection**, and an **AI usage** section (2 specific instances).
+- **No code changes** — M6 is documentation only.
+- **Outstanding (non-code):** record the short portfolio walkthrough video and paste the link into
+  the README's *Portfolio Walkthrough* section before submitting.
