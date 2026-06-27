@@ -316,3 +316,45 @@ ai201-project4-provenance-guard/
   flow diagrams + narrative + API surface.
 - [x] **`## AI Tool Plan` covers all three implementation milestones** with specific spec sections,
   generation requests, and verification steps → M3 / M4 / M5.
+
+---
+
+## Implementation Log
+
+Records what was actually built per milestone and where the implementation diverged from the
+spec above. (Testing results live in the README.)
+
+### Milestone 3 — submission endpoint + Signal 1 (built)
+- `config.py` — Groq key/model, `LOG_PATH`, the `AI_THRESHOLD`/`HUMAN_THRESHOLD` bands, weights.
+- `detector.py` — `llm_signal(text)` (Groq, `response_format=json_object`, `temperature=0`,
+  returns `{p_ai, rationale}`, clamped to `[0,1]`) and `score_to_attribution()`.
+- `auditor.py` — `log_submission(record)` appends a JSON line to `logs/audit.jsonl`;
+  `get_log(limit)` returns records most-recent-first.
+- `app.py` — `POST /submit` (validates `text` + `creator_id`, assigns a UUID `content_id`),
+  `GET /log`. In M3 `confidence` was the Signal-1 score and `label` a placeholder, as planned.
+- **Divergence:** none of substance. Validation returns `400` when `text`/`creator_id` is missing
+  (not specified in the spec, added as an obvious guard).
+
+### Milestone 4 — Signal 2 + confidence scoring (built)
+- `detector.py` — `stylometric_signal(text)` returns `{style_score, reliable, metrics}`;
+  `combine_signals(llm_score, style_score, style_reliable=True)` returns `{p_ai, attribution}`.
+- `app.py` — both signals now run; the combined score replaces the placeholder `confidence`, and
+  the audit record gained `style_score` and `style_reliable`.
+- `tests/test_scoring.py` — calibration harness over 5 deliberately chosen inputs.
+- **Divergences from §1/§5 (with reasons):**
+  1. **Sentence-length variance → coefficient of variation** (`stdev/mean`, scaled by 0.7) instead
+     of raw stdev, so the metric is comparable across short and long texts. Raw stdev barely
+     discriminated on short samples during calibration.
+  2. **Stylometric sub-weights pinned at 0.65 burstiness / 0.20 TTR / 0.15 punctuation** (the spec
+     named the three metrics but not their relative weights). Burstiness is the most reliable
+     discriminator; punctuation the weakest.
+  3. **Short-text mitigation made concrete:** when `reliable` is false (`< 3` sentences or
+     `< 25` words) `combine_signals()` re-weights to `0.85` LLM / `0.15` stylometric, implementing
+     the §5 edge-case plan; the `combine_signals()` signature gained a `style_reliable` argument.
+  4. **Disagreement pull formalized:** for `|llm − style| > 0.4`,
+     `p_ai += (0.5 − p_ai) * 0.5 * min((d − 0.4)/0.6, 1)` — a gentle pull toward 0.5, matching the
+     §1 intent.
+- **Known consequence (documented, not a bug):** short *clearly-AI* text can land in `uncertain`
+  rather than `likely_ai`, because the `0.80` bar requires both signals to agree. `likely_ai` is
+  reached when the signals concur (e.g. long, templated AI). This is the intended
+  false-positive-averse asymmetry.

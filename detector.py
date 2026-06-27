@@ -1,9 +1,11 @@
 """Detection signals and confidence scoring (planning.md §1).
 
 Milestone 3 implements Signal 1 (the Groq LLM classifier) and the attribution mapping.
-Signal 2 (stylometric heuristics) and combine_signals() arrive in Milestone 4.
+Milestone 4 adds Signal 2 (stylometric heuristics) and combine_signals().
 """
 import json
+import re
+import statistics
 
 from groq import Groq
 
@@ -68,3 +70,101 @@ def llm_signal(text):
     rationale = str(data.get("rationale", "")).strip()
 
     return {"p_ai": p_ai, "rationale": rationale}
+
+
+def _clamp(x, lo=0.0, hi=1.0):
+    return max(lo, min(hi, x))
+
+
+def _split_sentences(text):
+    return [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+
+
+def _words(text):
+    return re.findall(r"[a-zA-Z']+", text.lower())
+
+
+# Below this size the statistics are unreliable (planning.md §5, edge case 2).
+MIN_RELIABLE_SENTENCES = 3
+MIN_RELIABLE_WORDS = 25
+
+
+def stylometric_signal(text):
+    """Signal 2 — pure-Python structural heuristics (no model call).
+
+    Measures how *uniform* the writing is. AI text is statistically smoother; human
+    writing is bursty and irregular. Returns
+    {"style_score": float in [0,1], "reliable": bool, "metrics": {...}} where a higher
+    style_score means more uniform = more AI-like.
+
+    Three metrics (planning.md §1):
+      - sentence-length variance (stdev of words/sentence): low variance -> AI-like
+      - type-token ratio (unique/total words): low diversity -> AI-like
+      - punctuation density (marks/word): steady, moderate rate -> AI-like
+    Blind spot: length-sensitive and genre-blind (see `reliable`).
+    """
+    sentences = _split_sentences(text)
+    words = _words(text)
+    n_words = len(words)
+
+    wps = [len(_words(s)) for s in sentences] or [n_words]
+
+    # Metric 1 — sentence-length burstiness, as coefficient of variation (stdev/mean) so
+    # it is comparable across short and long texts. Humans vary far more than AI.
+    mean_wps = statistics.mean(wps) if wps else 0.0
+    sent_stdev = statistics.pstdev(wps) if len(wps) > 1 else 0.0
+    cv = (sent_stdev / mean_wps) if mean_wps else 0.0
+    ai_var = 1.0 - min(cv / 0.7, 1.0)  # CV 0 -> 1.0 (uniform/AI), >=0.7 -> 0 (bursty/human)
+
+    # Metric 2 — type-token ratio. AI reuses a tighter vocabulary band.
+    # (Length-confounded: short rich text trends high TTR; documented blind spot.)
+    ttr = len(set(words)) / n_words if n_words else 0.0
+    ai_ttr = _clamp((0.85 - ttr) / (0.85 - 0.55))  # ttr>=0.85 -> human, <=0.55 -> AI
+
+    # Metric 3 — punctuation density (weakest signal, lowest weight).
+    n_punct = len(re.findall(r"[.,;:!?\-—]", text))
+    punct_density = n_punct / n_words if n_words else 0.0
+    ai_punct = 1.0 - min(abs(punct_density - 0.12) / 0.12, 1.0)  # ~0.12/word reads machine-steady
+
+    style_score = _clamp(0.65 * ai_var + 0.20 * ai_ttr + 0.15 * ai_punct)
+
+    reliable = len(sentences) >= MIN_RELIABLE_SENTENCES and n_words >= MIN_RELIABLE_WORDS
+
+    return {
+        "style_score": round(style_score, 4),
+        "reliable": reliable,
+        "metrics": {
+            "sentence_stdev": round(sent_stdev, 3),
+            "sentence_cv": round(cv, 3),
+            "type_token_ratio": round(ttr, 3),
+            "punct_density": round(punct_density, 3),
+            "n_sentences": len(sentences),
+            "n_words": n_words,
+        },
+    }
+
+
+def combine_signals(llm_score, style_score, style_reliable=True):
+    """Blend the two signals into one calibrated p_ai (planning.md §1, §2).
+
+    p_ai = 0.6*llm + 0.4*style, then a disagreement adjustment pulls the result toward
+    0.5 (uncertain) when the semantic and structural signals strongly conflict — the main
+    defense against false positives. On short/unreliable text the stylometric signal is
+    down-weighted (planning.md §5, edge case 2).
+    """
+    if style_reliable:
+        w_llm, w_style = config.LLM_WEIGHT, config.STYLE_WEIGHT
+    else:
+        w_llm, w_style = 0.85, 0.15  # short text: lean on the LLM, distrust stylometrics
+
+    p_ai = w_llm * llm_score + w_style * style_score
+
+    # Disagreement pull: the further apart the two signals are beyond 0.4, the more we
+    # pull the combined score toward 0.5 (up to a 50% pull at maximal disagreement).
+    disagreement = abs(llm_score - style_score)
+    if disagreement > 0.4:
+        pull = min((disagreement - 0.4) / 0.6, 1.0)
+        p_ai = p_ai + (0.5 - p_ai) * (0.5 * pull)
+
+    p_ai = _clamp(p_ai)
+    return {"p_ai": round(p_ai, 4), "attribution": score_to_attribution(p_ai)}

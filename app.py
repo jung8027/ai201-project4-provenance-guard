@@ -35,14 +35,18 @@ def submit():
 
     content_id = str(uuid.uuid4())
 
-    # --- Signal 1: Groq LLM classifier ---
+    # --- Signal 1: Groq LLM classifier (semantic) ---
     signal1 = detector.llm_signal(text)
     llm_score = signal1["p_ai"]
 
-    # In M3 the attribution comes from Signal 1 alone; confidence is a placeholder for the
-    # combined score (M4) and the label is a placeholder for the transparency label (M5).
-    attribution = detector.score_to_attribution(llm_score)
-    confidence = llm_score  # placeholder — replaced by combine_signals() in M4
+    # --- Signal 2: stylometric heuristics (structural) ---
+    signal2 = detector.stylometric_signal(text)
+    style_score = signal2["style_score"]
+
+    # --- Confidence scoring: combine both signals into one calibrated p_ai (M4) ---
+    combined = detector.combine_signals(llm_score, style_score, signal2["reliable"])
+    confidence = combined["p_ai"]
+    attribution = combined["attribution"]
 
     record = {
         "content_id": content_id,
@@ -51,8 +55,11 @@ def submit():
         "attribution": attribution,
         "confidence": confidence,
         "llm_score": llm_score,
+        "style_score": style_score,
+        "style_reliable": signal2["reliable"],
         "llm_rationale": signal1["rationale"],
         "status": "classified",
+        # label is still a placeholder until Milestone 5
     }
     auditor.log_submission(record)
 

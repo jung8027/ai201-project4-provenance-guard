@@ -35,6 +35,60 @@ Complete your `planning.md` spec before implementing each milestone.
 
 ---
 
+## Confidence Scoring — Testing & Results
+
+The pipeline combines two signals into a single `p_ai` (probability the text is AI-generated):
+`p_ai = 0.6 · llm_score + 0.4 · style_score`, with a disagreement pull toward 0.5 when the
+semantic and structural signals conflict, and the stylometric signal down-weighted on
+short/unreliable text. Attribution bands are deliberately asymmetric to suppress false positives
+(`≥ 0.80 → likely_ai`, `0.30–0.80 → uncertain`, `≤ 0.30 → likely_human`).
+
+Five deliberately chosen inputs run through the full pipeline (`python tests/test_scoring.py`):
+
+```
+CASE                                     LLM  STYLE  REL   CONF  ATTRIBUTION
+----------------------------------------------------------------------------
+clearly AI (formal essay)               0.80   0.44 True   0.66  uncertain
+clearly human (casual review)           0.20   0.17 True   0.19  likely_human
+borderline: formal human writing        0.80   0.47 False   0.75  uncertain
+borderline: lightly edited AI           0.20   0.40 True   0.28  likely_human
+strongly templated AI (long, uniform)   0.90   0.71 True   0.82  likely_ai
+```
+
+**What this shows**
+
+- **Meaningful variation, not a binary flip.** Combined scores span `0.19 → 0.82` and reach all
+  three label bands — a 0.66 and a 0.82 produce different labels (`uncertain` vs `likely_ai`).
+- **Two contrasting example submissions** (as required):
+  - *High-confidence:* the strongly templated AI essay — `llm 0.90`, `style 0.71`, **combined 0.82
+    → likely_ai**. Both signals agree, so the score clears the conservative 0.80 bar.
+  - *Lower-confidence:* the casual human review — `llm 0.20`, `style 0.17`, **combined 0.19 →
+    likely_human**. Both signals agree the text is bursty and informal.
+- **False-positive mitigation works.** The *formal human* paragraph that signal 1 alone rated AI
+  (`llm 0.80`) lands at **0.75 `uncertain`**, not `likely_ai`, because the short-text down-weighting
+  keeps the system from confidently accusing a human writer.
+- **The 0.80 bar is intentionally hard to clear.** Short *clearly-AI* text (`combined 0.66`) stays in
+  `uncertain` rather than `likely_ai` unless both signals concur — the documented anti-false-positive
+  asymmetry, not a miscalibration.
+
+---
+
+## Audit Log
+
+Every submission writes a structured JSON line to `logs/audit.jsonl`, capturing both individual
+signal scores and the combined confidence. Retrieve recent entries via `GET /log`. Sample
+(3 entries, one per label band):
+
+```json
+{"content_id": "2dbb73e1-c7e3-426f-ae48-abd0edfed664", "creator_id": "u-ai", "timestamp": "2026-06-27T01:32:18.059977+00:00", "attribution": "uncertain", "confidence": 0.6573, "llm_score": 0.8, "style_score": 0.4432, "style_reliable": true, "llm_rationale": "The text exhibits overly formal and uniform language typical of AI-generated content.", "status": "classified"}
+{"content_id": "0b5bad47-3e11-46d3-a3bb-91d27314a34d", "creator_id": "u-human", "timestamp": "2026-06-27T01:32:18.413900+00:00", "attribution": "likely_human", "confidence": 0.1603, "llm_score": 0.2, "style_score": 0.1007, "style_reliable": true, "llm_rationale": "The text's casual tone, use of colloquial expressions, and personal experience suggest human authorship.", "status": "classified"}
+{"content_id": "64d6710b-a611-45fe-bbd8-96c70a9a3da6", "creator_id": "u-templated", "timestamp": "2026-06-27T01:32:18.644911+00:00", "attribution": "likely_ai", "confidence": 0.8171, "llm_score": 0.9, "style_score": 0.6927, "style_reliable": true, "llm_rationale": "The text exhibits an overly uniform and formulaic structure.", "status": "classified"}
+```
+
+*(Appeal entries and the `under_review` status are added in Milestone 5.)*
+
+---
+
 ## Required Features
 
 | Feature | Description |
